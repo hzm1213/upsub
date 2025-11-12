@@ -28,6 +28,7 @@ with open(EMOJI_JSON_FILE, "r", encoding="utf-8") as f:
 
 FLAGS_MAP = data["flags_map"]           # 旗帜 emoji -> ISO
 RANDOM_EMOJI = data["random_emoji_list"] # 随机 emoji
+ISO_TO_FLAG = {v: k for k, v in FLAGS_MAP.items()}  # ISO -> 旗帜
 
 # ===================== 获取默认分支 =====================
 def get_default_branch(repo):
@@ -51,7 +52,6 @@ def fetch_repo_files(repo):
 # ===================== 提取订阅链接 =====================
 def extract_links_from_content(content):
     links = set()
-    
     # YAML 多文档解析
     try:
         for doc in yaml.safe_load_all(content):
@@ -62,7 +62,6 @@ def extract_links_from_content(content):
                         links.add(url)
     except Exception:
         pass
-
     # JSON 解析兜底
     try:
         data = json.loads(content)
@@ -73,12 +72,10 @@ def extract_links_from_content(content):
                     links.add(url)
     except Exception:
         pass
-
     # 正则提取 URL 兜底
     urls = re.findall(r"https?://[^\s'\"]+", content)
     for u in urls:
         links.add(u.strip())
-    
     return links
 
 # ===================== 获取订阅节点 =====================
@@ -87,11 +84,9 @@ def fetch_nodes_from_link(url):
         r = requests.get(url, timeout=20)
         r.raise_for_status()
         content = r.text.strip()
-
         # 如果内容包含节点协议直接返回
         if any(proto in content for proto in NODE_PROTOCOLS):
             return content.splitlines()
-
         # 尝试 base64 解码后再检查协议
         try:
             decoded = base64.b64decode(content).decode()
@@ -99,14 +94,12 @@ def fetch_nodes_from_link(url):
                 return decoded.splitlines()
         except Exception:
             pass
-
-        # 非节点内容返回空
         return []
     except Exception as e:
         print(f"Failed to fetch {url}: {e}")
         return []
 
-# ===================== 节点重命名（只改 remark） =====================
+# ===================== 节点重命名（保留协议，只改 remark） =====================
 def rename_nodes_from_remark(nodes):
     total = len(nodes)
     if total < 100:
@@ -118,28 +111,41 @@ def rename_nodes_from_remark(nodes):
 
     renamed = []
     for idx, node in enumerate(nodes, 1):
-        # 分离协议部分和 remark
         if '#' in node:
             main_part, remark = node.split('#', 1)
         else:
             main_part, remark = node, ""
 
-        # 获取旗帜和国家缩写
+        # 尝试获取旗帜和国家缩写
         flag_emoji = ""
         region_code = ""
+
+        # 1. remark 中已有旗帜 emoji
         for emoji_flag, iso in FLAGS_MAP.items():
             if emoji_flag in remark:
                 flag_emoji = emoji_flag
                 region_code = iso
                 break
 
+        # 2. remark 中包含国家缩写
+        if not flag_emoji:
+            for iso in ISO_TO_FLAG:
+                if iso.upper() in remark.upper():
+                    flag_emoji = ISO_TO_FLAG[iso]
+                    region_code = iso
+                    break
+
+        # 3. 如果仍未识别到国家，使用小白旗 + ZZ
+        if not flag_emoji:
+            flag_emoji = "🏳️"
+            region_code = "ZZ"
+
         rand_emoji = random.choice(RANDOM_EMOJI)
         seq = seq_format.format(idx)
-
-        # 生成新的 remark
         new_remark = f"{rand_emoji}{total}{flag_emoji}{region_code}{seq}"
-        renamed_node = f"{main_part}#{new_remark}" if remark or new_remark else main_part
+        renamed_node = f"{main_part}#{new_remark}"
         renamed.append(renamed_node)
+
     return renamed
 
 # ===================== 保存 base64 文件 =====================
@@ -213,7 +219,5 @@ for idx, link in enumerate(sorted(all_links), 1):
         write_base64_file(renamed_nodes, filename)
         send_telegram_message(f"新增订阅文件：{filename}")
 
-# 自动提交并推送生成的文件
 git_push_changes()
-
 print("All subscription files processed and pushed to repository.")
