@@ -9,7 +9,6 @@ from pathlib import Path
 
 # ===================== 配置 =====================
 UPSTREAM_REPO = "suiyuan8/clash"
-UPSTREAM_BRANCH = "master"
 OUTPUT_DIR = "output"
 
 # Telegram 配置
@@ -26,9 +25,18 @@ with open(EMOJI_JSON_FILE, "r", encoding="utf-8") as f:
 FLAGS_MAP = data["flags_map"]           
 RANDOM_EMOJI = data["random_emoji_list"]
 
+# ===================== 获取默认分支 =====================
+def get_default_branch(repo):
+    """获取仓库默认分支"""
+    url = f"https://api.github.com/repos/{repo}"
+    r = requests.get(url, timeout=15)
+    r.raise_for_status()
+    return r.json()["default_branch"]
+
 # ===================== GitHub 文件列表 =====================
-def fetch_repo_files(repo, branch="master"):
+def fetch_repo_files(repo):
     """获取上游仓库所有文件的 raw URLs"""
+    branch = get_default_branch(repo)
     api_url = f"https://api.github.com/repos/{repo}/git/trees/{branch}?recursive=1"
     r = requests.get(api_url, timeout=20)
     r.raise_for_status()
@@ -42,8 +50,8 @@ def fetch_repo_files(repo, branch="master"):
 def extract_links_from_content(content):
     """从文本中提取可能的订阅 URL"""
     links = set()
+    # 尝试 YAML 解析
     try:
-        # 尝试 YAML 解析
         data = yaml.safe_load(content)
         if isinstance(data, dict):
             proxy_providers = data.get("proxy-providers", {})
@@ -54,8 +62,8 @@ def extract_links_from_content(content):
     except Exception:
         pass
 
+    # 尝试 JSON 解析
     try:
-        # 尝试 JSON 解析
         data = json.loads(content)
         if isinstance(data, dict):
             proxy_providers = data.get("proxy-providers", {})
@@ -69,8 +77,7 @@ def extract_links_from_content(content):
     # 其他格式：正则提取 http(s) 链接
     urls = re.findall(r"https?://[^\s'\"]+", content)
     for u in urls:
-        if "://" in u:
-            links.add(u.strip())
+        links.add(u.strip())
     return links
 
 # ===================== 获取订阅节点 =====================
@@ -135,7 +142,7 @@ def send_telegram_message(message):
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 print("Fetching repository file list...")
-file_urls = fetch_repo_files(UPSTREAM_REPO, UPSTREAM_BRANCH)
+file_urls = fetch_repo_files(UPSTREAM_REPO)
 print(f"Total files found: {len(file_urls)}")
 
 all_links = set()
