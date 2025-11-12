@@ -1,14 +1,15 @@
 import os
+import re
+import json
 import yaml
 import base64
-import requests
 import random
+import requests
 from pathlib import Path
-import json
 
 # ===================== 配置 =====================
-UPSTREAM_REPO_RAW = "https://raw.githubusercontent.com/suiyuan8/clash/master/"
-LOCAL_DIR = "upstream_clash"
+UPSTREAM_REPO = "suiyuan8/clash"
+UPSTREAM_BRANCH = "master"
 OUTPUT_DIR = "output"
 
 # Telegram 配置
@@ -22,15 +23,57 @@ EMOJI_JSON_FILE = "emoji_global.json"
 with open(EMOJI_JSON_FILE, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-FLAGS_MAP = data["flags_map"]           # 国家旗帜 -> ISO
-RANDOM_EMOJI = data["random_emoji_list"] # 非旗帜随机 emoji
+FLAGS_MAP = data["flags_map"]           
+RANDOM_EMOJI = data["random_emoji_list"]
 
-# ===================== 辅助函数 =====================
-def fetch_yaml(url):
-    r = requests.get(url, timeout=15)
+# ===================== GitHub 文件列表 =====================
+def fetch_repo_files(repo, branch="master"):
+    """获取上游仓库所有文件的 raw URLs"""
+    api_url = f"https://api.github.com/repos/{repo}/git/trees/{branch}?recursive=1"
+    r = requests.get(api_url, timeout=20)
     r.raise_for_status()
-    return yaml.safe_load(r.text)
+    files = []
+    for item in r.json().get("tree", []):
+        if item["type"] == "blob":
+            files.append(f"https://raw.githubusercontent.com/{repo}/{branch}/{item['path']}")
+    return files
 
+# ===================== 提取订阅链接 =====================
+def extract_links_from_content(content):
+    """从文本中提取可能的订阅 URL"""
+    links = set()
+    try:
+        # 尝试 YAML 解析
+        data = yaml.safe_load(content)
+        if isinstance(data, dict):
+            proxy_providers = data.get("proxy-providers", {})
+            for provider in proxy_providers.values():
+                url = provider.get("url")
+                if url:
+                    links.add(url)
+    except Exception:
+        pass
+
+    try:
+        # 尝试 JSON 解析
+        data = json.loads(content)
+        if isinstance(data, dict):
+            proxy_providers = data.get("proxy-providers", {})
+            for provider in proxy_providers.values():
+                url = provider.get("url")
+                if url:
+                    links.add(url)
+    except Exception:
+        pass
+
+    # 其他格式：正则提取 http(s) 链接
+    urls = re.findall(r"https?://[^\s'\"]+", content)
+    for u in urls:
+        if "://" in u:
+            links.add(u.strip())
+    return links
+
+# ===================== 获取订阅节点 =====================
 def fetch_nodes_from_link(url):
     try:
         r = requests.get(url, timeout=20)
@@ -45,6 +88,7 @@ def fetch_nodes_from_link(url):
         print(f"Failed to fetch {url}: {e}")
         return []
 
+# ===================== 节点重命名 =====================
 def rename_nodes_from_remark(nodes):
     total = len(nodes)
     if total < 100:
@@ -59,7 +103,6 @@ def rename_nodes_from_remark(nodes):
         remark = node
         flag_emoji = ""
         region_code = ""
-        # 通过 remark 匹配旗帜
         for emoji_flag, iso in FLAGS_MAP.items():
             if emoji_flag in remark:
                 flag_emoji = emoji_flag
@@ -72,12 +115,14 @@ def rename_nodes_from_remark(nodes):
         renamed.append(renamed_node)
     return renamed
 
+# ===================== 保存 base64 文件 =====================
 def write_base64_file(nodes, filename):
     b64_content = base64.b64encode("\n".join(nodes).encode()).decode()
     with open(filename, "w", encoding="utf-8") as f:
         f.write(b64_content)
     return b64_content
 
+# ===================== Telegram 消息 =====================
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -89,29 +134,30 @@ def send_telegram_message(message):
 # ===================== 主流程 =====================
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# 假设已知 YAML 文件列表
-upstream_yaml_files = ["config.yaml"]
+print("Fetching repository file list...")
+file_urls = fetch_repo_files(UPSTREAM_REPO, UPSTREAM_BRANCH)
+print(f"Total files found: {len(file_urls)}")
 
 all_links = set()
-for f in upstream_yaml_files:
-    url = UPSTREAM_REPO_RAW + f
-    data = fetch_yaml(url)
-    proxy_providers = data.get("proxy-providers", {})
-    for provider in proxy_providers.values():
-        link = provider.get("url")
-        if link:
-            all_links.add(link)
+for url in file_urls:
+    try:
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        content = r.text
+        links = extract_links_from_content(content)
+        all_links.update(links)
+    except Exception as e:
+        print(f"Failed to fetch {url}: {e}")
 
 print(f"Found {len(all_links)} unique subscription links")
 
-# 遍历每条链接生成订阅文件
+# 生成 base64 文件
 for idx, link in enumerate(sorted(all_links), 1):
     nodes = fetch_nodes_from_link(link)
     nodes = list(dict.fromkeys(nodes))  # 去重
     renamed_nodes = rename_nodes_from_remark(nodes)
     filename = os.path.join(OUTPUT_DIR, f"{idx:03d}.txt")
 
-    # 文件变化检测
     if Path(filename).exists():
         with open(filename, "r", encoding="utf-8") as f:
             old_content = f.read()
