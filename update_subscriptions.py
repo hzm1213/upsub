@@ -65,7 +65,6 @@ def extract_links_from_content(content):
                     links.add(url)
     except Exception:
         pass
-    # 正则兜底
     urls = re.findall(r"https?://[^\s'\"]+", content)
     for u in urls:
         links.add(u.strip())
@@ -99,7 +98,7 @@ def get_vmess_remark(node):
         decoded = base64.b64decode(b64_content).decode()
         data = json.loads(decoded)
         remark = data.get("ps", "")
-        return urllib.parse.unquote(remark)
+        return remark
     except Exception:
         return ""
 
@@ -111,7 +110,9 @@ def get_generic_remark(node):
 
 # ===================== 修正 TW remark =====================
 def fix_tw_remark(remark):
+    # 先 URL 解码
     remark_decoded = urllib.parse.unquote(remark)
+    # 替换 emoji 或 URL 编码的 TW
     remark_decoded = remark_decoded.replace("🇨🇳TW", "🇹🇼TW")
     remark_decoded = remark_decoded.replace("%F0%9F%87%A8%F0%9F%87%B3TW", "🇹🇼TW")
     return remark_decoded
@@ -128,10 +129,13 @@ def rename_nodes(nodes):
 
     renamed = []
     for idx, node in enumerate(nodes, 1):
+        remark = ""
         if node.startswith("vmess://"):
             remark = get_vmess_remark(node)
         else:
             remark = get_generic_remark(node)
+
+        remark = fix_tw_remark(remark)
 
         flag_emoji = "🏳️"
         region_code = "ZZ"
@@ -152,7 +156,6 @@ def rename_nodes(nodes):
         rand_emoji = random.choice(RANDOM_EMOJI)
         seq = seq_format.format(idx)
         new_remark = f"{rand_emoji}{total}{flag_emoji}{region_code}{seq}"
-        new_remark = fix_tw_remark(new_remark)
 
         # 更新节点
         if node.startswith("vmess://"):
@@ -206,11 +209,11 @@ def git_push_changes():
 
 # ===================== 主流程 =====================
 
-# 清空 output 目录
+# 清空 output 目录并确保从 001 开始
 if os.path.exists(OUTPUT_DIR):
     for f in os.listdir(OUTPUT_DIR):
         path = os.path.join(OUTPUT_DIR, f)
-        if os.path.isfile(path) and f.endswith(".txt"):
+        if os.path.isfile(path):
             os.remove(path)
 else:
     os.makedirs(OUTPUT_DIR)
