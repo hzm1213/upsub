@@ -7,6 +7,7 @@ import random
 import requests
 import subprocess
 import urllib.parse
+import shutil
 
 # ===================== 配置 =====================
 UPSTREAM_REPO = "suiyuan8/clash"
@@ -110,9 +111,7 @@ def get_generic_remark(node):
 
 # ===================== 修正 TW remark =====================
 def fix_tw_remark(remark):
-    # 先 URL 解码
     remark_decoded = urllib.parse.unquote(remark)
-    # 替换 emoji 或 URL 编码的 TW
     remark_decoded = remark_decoded.replace("🇨🇳TW", "🇹🇼TW")
     remark_decoded = remark_decoded.replace("%F0%9F%87%A8%F0%9F%87%B3TW", "🇹🇼TW")
     return remark_decoded
@@ -209,14 +208,10 @@ def git_push_changes():
 
 # ===================== 主流程 =====================
 
-# 清空 output 目录并确保从 001 开始
+# 清空 output 目录，保证从 001 开始
 if os.path.exists(OUTPUT_DIR):
-    for f in os.listdir(OUTPUT_DIR):
-        path = os.path.join(OUTPUT_DIR, f)
-        if os.path.isfile(path):
-            os.remove(path)
-else:
-    os.makedirs(OUTPUT_DIR)
+    shutil.rmtree(OUTPUT_DIR)
+os.makedirs(OUTPUT_DIR)
 
 print("Fetching repository file list...")
 file_urls = fetch_repo_files(UPSTREAM_REPO)
