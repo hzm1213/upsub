@@ -5,6 +5,7 @@ import yaml
 import base64
 import random
 import requests
+import subprocess
 from pathlib import Path
 
 # ===================== 配置 =====================
@@ -27,7 +28,6 @@ RANDOM_EMOJI = data["random_emoji_list"]
 
 # ===================== 获取默认分支 =====================
 def get_default_branch(repo):
-    """获取仓库默认分支"""
     url = f"https://api.github.com/repos/{repo}"
     r = requests.get(url, timeout=15)
     r.raise_for_status()
@@ -35,7 +35,6 @@ def get_default_branch(repo):
 
 # ===================== GitHub 文件列表 =====================
 def fetch_repo_files(repo):
-    """获取上游仓库所有文件的 raw URLs"""
     branch = get_default_branch(repo)
     api_url = f"https://api.github.com/repos/{repo}/git/trees/{branch}?recursive=1"
     r = requests.get(api_url, timeout=20)
@@ -48,7 +47,6 @@ def fetch_repo_files(repo):
 
 # ===================== 提取订阅链接 =====================
 def extract_links_from_content(content):
-    """从文本中提取可能的订阅 URL"""
     links = set()
     # 尝试 YAML 解析
     try:
@@ -61,7 +59,6 @@ def extract_links_from_content(content):
                     links.add(url)
     except Exception:
         pass
-
     # 尝试 JSON 解析
     try:
         data = json.loads(content)
@@ -73,8 +70,7 @@ def extract_links_from_content(content):
                     links.add(url)
     except Exception:
         pass
-
-    # 其他格式：正则提取 http(s) 链接
+    # 正则提取 URL
     urls = re.findall(r"https?://[^\s'\"]+", content)
     for u in urls:
         links.add(u.strip())
@@ -115,7 +111,6 @@ def rename_nodes_from_remark(nodes):
                 flag_emoji = emoji_flag
                 region_code = iso
                 break
-
         rand_emoji = random.choice(RANDOM_EMOJI)
         seq = seq_format.format(idx)
         renamed_node = f"{rand_emoji}{total}{flag_emoji}{region_code}{seq}"
@@ -138,6 +133,22 @@ def send_telegram_message(message):
     except Exception as e:
         print("Telegram message failed:", e)
 
+# ===================== Git 提交并推送 =====================
+def git_push_changes():
+    try:
+        subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+        subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+        subprocess.run(["git", "add", OUTPUT_DIR], check=True)
+        result = subprocess.run(["git", "diff", "--cached", "--quiet"])
+        if result.returncode != 0:
+            subprocess.run(["git", "commit", "-m", "Update subscription files [skip ci]"], check=True)
+            subprocess.run(["git", "push"], check=True)
+            print("Changes pushed to repository.")
+        else:
+            print("No changes to commit.")
+    except Exception as e:
+        print("Git push failed:", e)
+
 # ===================== 主流程 =====================
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -158,7 +169,6 @@ for url in file_urls:
 
 print(f"Found {len(all_links)} unique subscription links")
 
-# 生成 base64 文件
 for idx, link in enumerate(sorted(all_links), 1):
     nodes = fetch_nodes_from_link(link)
     nodes = list(dict.fromkeys(nodes))  # 去重
@@ -176,4 +186,7 @@ for idx, link in enumerate(sorted(all_links), 1):
         write_base64_file(renamed_nodes, filename)
         send_telegram_message(f"新增订阅文件：{filename}")
 
-print("All subscription files processed.")
+# 自动提交并推送生成的文件
+git_push_changes()
+
+print("All subscription files processed and pushed to repository.")
