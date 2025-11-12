@@ -48,7 +48,6 @@ def fetch_repo_files(repo):
 # ===================== 提取订阅链接 =====================
 def extract_links_from_content(content):
     links = set()
-    # YAML
     try:
         for doc in yaml.safe_load_all(content):
             if isinstance(doc, dict) and "proxy-providers" in doc:
@@ -58,7 +57,6 @@ def extract_links_from_content(content):
                         links.add(url)
     except Exception:
         pass
-    # JSON
     try:
         data = json.loads(content)
         if isinstance(data, dict) and "proxy-providers" in data:
@@ -68,7 +66,6 @@ def extract_links_from_content(content):
                     links.add(url)
     except Exception:
         pass
-    # 正则匹配
     urls = re.findall(r"https?://[^\s'\"]+", content)
     links.update(urls)
     return links
@@ -79,19 +76,17 @@ def fetch_nodes_from_link(url):
         r = requests.get(url, timeout=20)
         r.raise_for_status()
         content = r.text.strip()
-        nodes = []
-        # 直接包含节点协议
+        # 纯文本协议节点
         if any(proto in content for proto in NODE_PROTOCOLS):
-            nodes = content.splitlines()
-        else:
-            # 尝试 Base64 解码
-            try:
-                decoded = base64.b64decode(content).decode()
-                if any(proto in decoded for proto in NODE_PROTOCOLS):
-                    nodes = decoded.splitlines()
-            except Exception:
-                pass
-        return nodes
+            return content.splitlines()
+        # base64
+        try:
+            decoded = base64.b64decode(content).decode()
+            if any(proto in decoded for proto in NODE_PROTOCOLS):
+                return decoded.splitlines()
+        except Exception:
+            pass
+        return []
     except Exception as e:
         print(f"Failed to fetch {url}: {e}")
         return []
@@ -171,20 +166,27 @@ def rename_nodes(nodes):
             renamed.append(f"{node}#{new_remark}")
     return renamed
 
+# ===================== 写文件 =====================
 def write_base64_file(nodes, filename):
     b64_content = base64.b64encode("\n".join(nodes).encode()).decode()
     with open(filename, "w", encoding="utf-8") as f:
         f.write(b64_content)
     return b64_content
 
+# ===================== Telegram =====================
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode":"HTML"}
     try:
-        requests.post(url, data=data, timeout=10)
+        resp = requests.post(url, json=payload, timeout=15)
+        if resp.status_code == 200:
+            print("✅ Telegram message sent.")
+        else:
+            print(f"❌ Telegram failed: {resp.status_code}, {resp.text}")
     except Exception as e:
-        print("Telegram message failed:", e)
+        print(f"❌ Telegram exception: {e}")
 
+# ===================== Git 推送 =====================
 def git_push_changes():
     try:
         subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
@@ -201,14 +203,13 @@ def git_push_changes():
         print("Git push failed:", e)
 
 # ===================== 主流程 =====================
-
-# 清空 output 文件夹
+print("🧹 Cleaning output folder...")
 if os.path.exists(OUTPUT_DIR):
     shutil.rmtree(OUTPUT_DIR)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-print("🧹 Output folder fully reset. Numbering will start from 001.")
+print("✅ Output folder fully reset. Numbering will start from 001.")
 
-print("🔎 Fetching repository file list...")
+print("🔎 Fetching repository files...")
 file_urls = fetch_repo_files(UPSTREAM_REPO)
 print(f"Total files found: {len(file_urls)}")
 
@@ -223,20 +224,19 @@ for url in file_urls:
     except Exception as e:
         print(f"Failed to fetch {url}: {e}")
 
-print(f"🔎 Found {len(all_links)} unique URLs")
+print(f"🔎 Found {len(all_links)} unique URLs.")
 
 valid_count = 0
 for idx, link in enumerate(sorted(all_links), 1):
     nodes = fetch_nodes_from_link(link)
     if not nodes:
-        continue  # 跳过无效节点链接，不占文件编号
-    nodes = list(dict.fromkeys(nodes))  # 去重
+        continue  # 跳过无效节点
+    nodes = list(dict.fromkeys(nodes))
     renamed_nodes = rename_nodes(nodes)
     filename = os.path.join(OUTPUT_DIR, f"{valid_count+1:03d}.txt")
     write_base64_file(renamed_nodes, filename)
     send_telegram_message(f"订阅文件生成/更新：{filename}")
     valid_count += 1
-    print(f"[{valid_count:03d}] Processed {link}")
 
 git_push_changes()
-print(f"🎯 All subscription files processed and pushed to repository. Valid subscription count: {valid_count}")
+print(f"🎯 All subscription files processed and pushed. Valid subscription count: {valid_count}")
