@@ -19,6 +19,9 @@ TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
 # emoji JSON 文件路径
 EMOJI_JSON_FILE = "emoji_global.json"
 
+# 节点协议列表
+NODE_PROTOCOLS = ["vmess://", "ss://", "trojan://", "vless://"]
+
 # ===================== 加载 emoji =====================
 with open(EMOJI_JSON_FILE, "r", encoding="utf-8") as f:
     data = json.load(f)
@@ -49,7 +52,7 @@ def fetch_repo_files(repo):
 def extract_links_from_content(content):
     links = set()
     
-    # 支持多文档 YAML
+    # YAML 多文档解析
     try:
         for doc in yaml.safe_load_all(content):
             if isinstance(doc, dict) and "proxy-providers" in doc:
@@ -71,7 +74,7 @@ def extract_links_from_content(content):
     except Exception:
         pass
 
-    # 正则提取 URL，兜底
+    # 正则提取 URL 兜底
     urls = re.findall(r"https?://[^\s'\"]+", content)
     for u in urls:
         links.add(u.strip())
@@ -84,11 +87,21 @@ def fetch_nodes_from_link(url):
         r = requests.get(url, timeout=20)
         r.raise_for_status()
         content = r.text.strip()
+
+        # 如果内容包含节点协议直接返回
+        if any(proto in content for proto in NODE_PROTOCOLS):
+            return content.splitlines()
+
+        # 尝试 base64 解码后再检查协议
         try:
             decoded = base64.b64decode(content).decode()
-            return decoded.splitlines()
+            if any(proto in decoded for proto in NODE_PROTOCOLS):
+                return decoded.splitlines()
         except Exception:
-            return content.splitlines()
+            pass
+
+        # 非节点内容返回空
+        return []
     except Exception as e:
         print(f"Failed to fetch {url}: {e}")
         return []
@@ -173,6 +186,8 @@ print(f"Found {len(all_links)} unique subscription links")
 
 for idx, link in enumerate(sorted(all_links), 1):
     nodes = fetch_nodes_from_link(link)
+    if not nodes:
+        continue  # 不是订阅节点，跳过
     nodes = list(dict.fromkeys(nodes))  # 去重
     renamed_nodes = rename_nodes_from_remark(nodes)
     filename = os.path.join(OUTPUT_DIR, f"{idx:03d}.txt")
