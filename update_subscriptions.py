@@ -16,7 +16,6 @@ TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
 
 EMOJI_JSON_FILE = "emoji_global.json"  # 包含 flags_map 和 random_emoji_list
-
 NODE_PROTOCOLS = ["vmess://", "ss://", "trojan://", "vless://"]
 
 # ===================== 加载 emoji =====================
@@ -78,10 +77,8 @@ def fetch_nodes_from_link(url):
         r = requests.get(url, timeout=20)
         r.raise_for_status()
         content = r.text.strip()
-        # 如果内容包含节点协议直接返回
         if any(proto in content for proto in NODE_PROTOCOLS):
             return content.splitlines()
-        # 尝试 base64 解码
         try:
             decoded = base64.b64decode(content).decode()
             if any(proto in decoded for proto in NODE_PROTOCOLS):
@@ -112,9 +109,12 @@ def get_generic_remark(node):
         return urllib.parse.unquote(remark)
     return ""
 
-# ===================== 修正 🇨🇳TW -> 🇹🇼TW =====================
-def fix_cn_tw_remark(remark):
-    return remark.replace("🇨🇳TW", "🇹🇼TW")
+# ===================== 修正 TW remark =====================
+def fix_tw_remark(remark):
+    remark_decoded = urllib.parse.unquote(remark)
+    remark_decoded = remark_decoded.replace("🇨🇳TW", "🇹🇼TW")
+    remark_decoded = remark_decoded.replace("%F0%9F%87%A8%F0%9F%87%B3TW", "🇹🇼TW")
+    return remark_decoded
 
 # ===================== 节点重命名 =====================
 def rename_nodes(nodes):
@@ -152,7 +152,7 @@ def rename_nodes(nodes):
         rand_emoji = random.choice(RANDOM_EMOJI)
         seq = seq_format.format(idx)
         new_remark = f"{rand_emoji}{total}{flag_emoji}{region_code}{seq}"
-        new_remark = fix_cn_tw_remark(new_remark)
+        new_remark = fix_tw_remark(new_remark)
 
         # 更新节点
         if node.startswith("vmess://"):
@@ -209,8 +209,9 @@ def git_push_changes():
 # 清空 output 目录
 if os.path.exists(OUTPUT_DIR):
     for f in os.listdir(OUTPUT_DIR):
-        if f.endswith(".txt"):
-            os.remove(os.path.join(OUTPUT_DIR, f))
+        path = os.path.join(OUTPUT_DIR, f)
+        if os.path.isfile(path) and f.endswith(".txt"):
+            os.remove(path)
 else:
     os.makedirs(OUTPUT_DIR)
 
