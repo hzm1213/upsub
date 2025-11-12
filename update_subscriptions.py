@@ -45,35 +45,37 @@ def fetch_repo_files(repo):
             files.append(f"https://raw.githubusercontent.com/{repo}/{branch}/{item['path']}")
     return files
 
-# ===================== 提取订阅链接 =====================
+# ===================== 提取订阅链接（增强版） =====================
 def extract_links_from_content(content):
     links = set()
-    # 尝试 YAML 解析
+    
+    # 支持多文档 YAML
     try:
-        data = yaml.safe_load(content)
-        if isinstance(data, dict):
-            proxy_providers = data.get("proxy-providers", {})
-            for provider in proxy_providers.values():
-                url = provider.get("url")
-                if url:
-                    links.add(url)
+        for doc in yaml.safe_load_all(content):
+            if isinstance(doc, dict) and "proxy-providers" in doc:
+                for provider in doc["proxy-providers"].values():
+                    url = provider.get("url")
+                    if url:
+                        links.add(url)
     except Exception:
         pass
-    # 尝试 JSON 解析
+
+    # JSON 解析兜底
     try:
         data = json.loads(content)
-        if isinstance(data, dict):
-            proxy_providers = data.get("proxy-providers", {})
-            for provider in proxy_providers.values():
+        if isinstance(data, dict) and "proxy-providers" in data:
+            for provider in data["proxy-providers"].values():
                 url = provider.get("url")
                 if url:
                     links.add(url)
     except Exception:
         pass
-    # 正则提取 URL
+
+    # 正则提取 URL，兜底
     urls = re.findall(r"https?://[^\s'\"]+", content)
     for u in urls:
         links.add(u.strip())
+    
     return links
 
 # ===================== 获取订阅节点 =====================
