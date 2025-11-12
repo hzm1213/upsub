@@ -29,9 +29,8 @@ with open(EMOJI_JSON_FILE, "r", encoding="utf-8") as f:
 
 FLAGS_MAP = data["flags_map"]           # 旗帜 emoji -> ISO
 RANDOM_EMOJI = data["random_emoji_list"] # 随机 emoji
-ISO_TO_FLAG = {v: k for k, v in FLAGS_MAP.items()}  # ISO -> 旗帜
 
-# ===================== 获取默认分支 =====================
+# ===================== GitHub 默认分支 =====================
 def get_default_branch(repo):
     url = f"https://api.github.com/repos/{repo}"
     r = requests.get(url, timeout=15)
@@ -120,7 +119,11 @@ def get_generic_remark(node):
         return urllib.parse.unquote(remark)
     return ""
 
-# ===================== 节点重命名（保留协议，只改 remark） =====================
+# ===================== 修正 🇨🇳TW -> 🇹🇼TW =====================
+def fix_cn_tw_remark(remark):
+    return remark.replace("🇨🇳TW", "🇹🇼TW")
+
+# ===================== 节点重命名 =====================
 def rename_nodes(nodes):
     total = len(nodes)
     if total < 100:
@@ -137,44 +140,40 @@ def rename_nodes(nodes):
         else:
             remark = get_generic_remark(node)
 
-        # 尝试获取旗帜和国家缩写
-        flag_emoji = ""
-        region_code = ""
+        # 默认 flag + ISO
+        flag_emoji = "🏳️"
+        region_code = "ZZ"
 
+        # 尝试从 remark 中匹配现有 flag 或 ISO
         for emoji_flag, iso in FLAGS_MAP.items():
             if emoji_flag in remark:
                 flag_emoji = emoji_flag
                 region_code = iso
                 break
-
-        if not flag_emoji:
-            for iso in ISO_TO_FLAG:
+        if flag_emoji == "🏳️":
+            for iso, emoji_flag_candidate in {v:k for k,v in FLAGS_MAP.items()}.items():
                 if iso.upper() in remark.upper():
-                    flag_emoji = ISO_TO_FLAG[iso]
+                    flag_emoji = emoji_flag_candidate
                     region_code = iso
                     break
-
-        if not flag_emoji:
-            flag_emoji = "🏳️"
-            region_code = "ZZ"
 
         rand_emoji = random.choice(RANDOM_EMOJI)
         seq = seq_format.format(idx)
         new_remark = f"{rand_emoji}{total}{flag_emoji}{region_code}{seq}"
+        # 修正 🇨🇳TW -> 🇹🇼TW
+        new_remark = fix_cn_tw_remark(new_remark)
 
+        # 更新节点
         if node.startswith("vmess://"):
-            # 修改 VMESS 的 ps 字段并重新编码
             b64_content = node[len("vmess://"):]
             try:
                 decoded = base64.b64decode(b64_content).decode()
                 data = json.loads(decoded)
                 data["ps"] = new_remark
-                new_node = "vmess://" + base64.b64encode(json.dumps(data).encode()).decode()
-                renamed.append(new_node)
+                renamed.append("vmess://" + base64.b64encode(json.dumps(data).encode()).decode())
                 continue
             except Exception:
                 pass
-        # 其它协议直接修改 remark
         if "#" in node:
             main_part = node.split("#",1)[0]
             renamed.append(f"{main_part}#{new_remark}")
@@ -217,10 +216,12 @@ def git_push_changes():
 # ===================== 主流程 =====================
 
 # 清空 output 目录
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-for f in os.listdir(OUTPUT_DIR):
-    if f.endswith(".txt"):
-        os.remove(os.path.join(OUTPUT_DIR, f))
+if os.path.exists(OUTPUT_DIR):
+    for f in os.listdir(OUTPUT_DIR):
+        if f.endswith(".txt"):
+            os.remove(os.path.join(OUTPUT_DIR, f))
+else:
+    os.makedirs(OUTPUT_DIR)
 
 print("Fetching repository file list...")
 file_urls = fetch_repo_files(UPSTREAM_REPO)
@@ -233,21 +234,3 @@ for url in file_urls:
         r.raise_for_status()
         content = r.text
         links = extract_links_from_content(content)
-        all_links.update(links)
-    except Exception as e:
-        print(f"Failed to fetch {url}: {e}")
-
-print(f"Found {len(all_links)} unique subscription links")
-
-for idx, link in enumerate(sorted(all_links), 1):
-    nodes = fetch_nodes_from_link(link)
-    if not nodes:
-        continue
-    nodes = list(dict.fromkeys(nodes))  # 去重
-    renamed_nodes = rename_nodes(nodes)
-    filename = os.path.join(OUTPUT_DIR, f"{idx:03d}.txt")
-    write_base64_file(renamed_nodes, filename)
-    send_telegram_message(f"订阅文件生成/更新：{filename}")
-
-git_push_changes()
-print("All subscription files processed and pushed to repository.")
