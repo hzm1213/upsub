@@ -6,6 +6,7 @@ import base64
 import random
 import requests
 import subprocess
+import urllib.parse
 from pathlib import Path
 
 # ===================== 配置 =====================
@@ -99,8 +100,28 @@ def fetch_nodes_from_link(url):
         print(f"Failed to fetch {url}: {e}")
         return []
 
+# ===================== 解析 VMESS remark =====================
+def get_vmess_remark(node):
+    if not node.startswith("vmess://"):
+        return ""
+    b64_content = node[len("vmess://"):]
+    try:
+        decoded = base64.b64decode(b64_content).decode()
+        data = json.loads(decoded)
+        remark = data.get("ps", "")
+        return urllib.parse.unquote(remark)
+    except Exception:
+        return ""
+
+# ===================== 解析其他协议 remark =====================
+def get_generic_remark(node):
+    if "#" in node:
+        remark = node.split("#",1)[1]
+        return urllib.parse.unquote(remark)
+    return ""
+
 # ===================== 节点重命名（保留协议，只改 remark） =====================
-def rename_nodes_from_remark(nodes):
+def rename_nodes(nodes):
     total = len(nodes)
     if total < 100:
         seq_format = "{:02d}"
@@ -111,23 +132,21 @@ def rename_nodes_from_remark(nodes):
 
     renamed = []
     for idx, node in enumerate(nodes, 1):
-        if '#' in node:
-            main_part, remark = node.split('#', 1)
+        if node.startswith("vmess://"):
+            remark = get_vmess_remark(node)
         else:
-            main_part, remark = node, ""
+            remark = get_generic_remark(node)
 
         # 尝试获取旗帜和国家缩写
         flag_emoji = ""
         region_code = ""
 
-        # 1. remark 中已有旗帜 emoji
         for emoji_flag, iso in FLAGS_MAP.items():
             if emoji_flag in remark:
                 flag_emoji = emoji_flag
                 region_code = iso
                 break
 
-        # 2. remark 中包含国家缩写
         if not flag_emoji:
             for iso in ISO_TO_FLAG:
                 if iso.upper() in remark.upper():
@@ -135,7 +154,6 @@ def rename_nodes_from_remark(nodes):
                     region_code = iso
                     break
 
-        # 3. 如果仍未识别到国家，使用小白旗 + ZZ
         if not flag_emoji:
             flag_emoji = "🏳️"
             region_code = "ZZ"
@@ -143,9 +161,25 @@ def rename_nodes_from_remark(nodes):
         rand_emoji = random.choice(RANDOM_EMOJI)
         seq = seq_format.format(idx)
         new_remark = f"{rand_emoji}{total}{flag_emoji}{region_code}{seq}"
-        renamed_node = f"{main_part}#{new_remark}"
-        renamed.append(renamed_node)
 
+        if node.startswith("vmess://"):
+            # 修改 VMESS 的 ps 字段并重新编码
+            b64_content = node[len("vmess://"):]
+            try:
+                decoded = base64.b64decode(b64_content).decode()
+                data = json.loads(decoded)
+                data["ps"] = new_remark
+                new_node = "vmess://" + base64.b64encode(json.dumps(data).encode()).decode()
+                renamed.append(new_node)
+                continue
+            except Exception:
+                pass
+        # 其它协议直接修改 remark
+        if "#" in node:
+            main_part = node.split("#",1)[0]
+            renamed.append(f"{main_part}#{new_remark}")
+        else:
+            renamed.append(f"{node}#{new_remark}")
     return renamed
 
 # ===================== 保存 base64 文件 =====================
@@ -181,7 +215,12 @@ def git_push_changes():
         print("Git push failed:", e)
 
 # ===================== 主流程 =====================
+
+# 清空 output 目录
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+for f in os.listdir(OUTPUT_DIR):
+    if f.endswith(".txt"):
+        os.remove(os.path.join(OUTPUT_DIR, f))
 
 print("Fetching repository file list...")
 file_urls = fetch_repo_files(UPSTREAM_REPO)
@@ -203,21 +242,12 @@ print(f"Found {len(all_links)} unique subscription links")
 for idx, link in enumerate(sorted(all_links), 1):
     nodes = fetch_nodes_from_link(link)
     if not nodes:
-        continue  # 不是订阅节点，跳过
+        continue
     nodes = list(dict.fromkeys(nodes))  # 去重
-    renamed_nodes = rename_nodes_from_remark(nodes)
+    renamed_nodes = rename_nodes(nodes)
     filename = os.path.join(OUTPUT_DIR, f"{idx:03d}.txt")
-
-    if Path(filename).exists():
-        with open(filename, "r", encoding="utf-8") as f:
-            old_content = f.read()
-        new_content = base64.b64encode("\n".join(renamed_nodes).encode()).decode()
-        if old_content != new_content:
-            write_base64_file(renamed_nodes, filename)
-            send_telegram_message(f"仓库文件变化：{filename}")
-    else:
-        write_base64_file(renamed_nodes, filename)
-        send_telegram_message(f"新增订阅文件：{filename}")
+    write_base64_file(renamed_nodes, filename)
+    send_telegram_message(f"订阅文件生成/更新：{filename}")
 
 git_push_changes()
 print("All subscription files processed and pushed to repository.")
