@@ -195,11 +195,11 @@ def git_push_changes():
 
 # ===================== 主流程 =====================
 
-# 彻底删除 output 文件夹，包括 Git index 中的旧文件
+# 安全删除 output 文件夹
+subprocess.run(["git", "rm", "-rf", OUTPUT_DIR], check=False)
 if os.path.exists(OUTPUT_DIR):
-    subprocess.run(["git", "rm", "-rf", OUTPUT_DIR], check=False)
     shutil.rmtree(OUTPUT_DIR)
-os.makedirs(OUTPUT_DIR)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 print("Fetching repository file list...")
 file_urls = fetch_repo_files(UPSTREAM_REPO)
