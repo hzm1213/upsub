@@ -26,8 +26,8 @@ NODE_PROTOCOLS = ["vmess://", "ss://", "trojan://", "vless://"]
 with open(EMOJI_JSON_FILE, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-FLAGS_MAP = data["flags_map"]           
-RANDOM_EMOJI = data["random_emoji_list"]
+FLAGS_MAP = data["flags_map"]           # 旗帜 emoji -> ISO
+RANDOM_EMOJI = data["random_emoji_list"] # 随机 emoji
 
 # ===================== 获取默认分支 =====================
 def get_default_branch(repo):
@@ -48,7 +48,7 @@ def fetch_repo_files(repo):
             files.append(f"https://raw.githubusercontent.com/{repo}/{branch}/{item['path']}")
     return files
 
-# ===================== 提取订阅链接（增强版） =====================
+# ===================== 提取订阅链接 =====================
 def extract_links_from_content(content):
     links = set()
     
@@ -106,7 +106,7 @@ def fetch_nodes_from_link(url):
         print(f"Failed to fetch {url}: {e}")
         return []
 
-# ===================== 节点重命名 =====================
+# ===================== 节点重命名（只改 remark） =====================
 def rename_nodes_from_remark(nodes):
     total = len(nodes)
     if total < 100:
@@ -118,7 +118,13 @@ def rename_nodes_from_remark(nodes):
 
     renamed = []
     for idx, node in enumerate(nodes, 1):
-        remark = node
+        # 分离协议部分和 remark
+        if '#' in node:
+            main_part, remark = node.split('#', 1)
+        else:
+            main_part, remark = node, ""
+
+        # 获取旗帜和国家缩写
         flag_emoji = ""
         region_code = ""
         for emoji_flag, iso in FLAGS_MAP.items():
@@ -126,9 +132,13 @@ def rename_nodes_from_remark(nodes):
                 flag_emoji = emoji_flag
                 region_code = iso
                 break
+
         rand_emoji = random.choice(RANDOM_EMOJI)
         seq = seq_format.format(idx)
-        renamed_node = f"{rand_emoji}{total}{flag_emoji}{region_code}{seq}"
+
+        # 生成新的 remark
+        new_remark = f"{rand_emoji}{total}{flag_emoji}{region_code}{seq}"
+        renamed_node = f"{main_part}#{new_remark}" if remark or new_remark else main_part
         renamed.append(renamed_node)
     return renamed
 
