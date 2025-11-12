@@ -13,8 +13,8 @@ import shutil
 UPSTREAM_REPO = "suiyuan8/clash"
 OUTPUT_DIR = "output"
 
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
 EMOJI_JSON_FILE = "emoji_global.json"  # 包含 flags_map 和 random_emoji_list
 NODE_PROTOCOLS = ["vmess://", "ss://", "trojan://", "vless://"]
