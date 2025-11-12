@@ -103,7 +103,7 @@ def get_vmess_remark(node):
 
 def get_generic_remark(node):
     if "#" in node:
-        remark = node.split("#",1)[1]
+        remark = node.split("#", 1)[1]
         return urllib.parse.unquote(remark)
     return ""
 
@@ -137,7 +137,7 @@ def rename_nodes(nodes):
                 region_code = iso
                 break
         if flag_emoji == "🏳️":
-            for iso, emoji_flag_candidate in {v:k for k,v in FLAGS_MAP.items()}.items():
+            for iso, emoji_flag_candidate in {v: k for k, v in FLAGS_MAP.items()}.items():
                 if iso.upper() in remark.upper():
                     flag_emoji = emoji_flag_candidate
                     region_code = iso
@@ -158,18 +158,20 @@ def rename_nodes(nodes):
             except Exception:
                 pass
         if "#" in node:
-            main_part = node.split("#",1)[0]
+            main_part = node.split("#", 1)[0]
             renamed.append(f"{main_part}#{new_remark}")
         else:
             renamed.append(f"{node}#{new_remark}")
     return renamed
 
+# ===================== 写入 Base64 文件 =====================
 def write_base64_file(nodes, filename):
     b64_content = base64.b64encode("\n".join(nodes).encode()).decode()
     with open(filename, "w", encoding="utf-8") as f:
         f.write(b64_content)
     return b64_content
 
+# ===================== Telegram 推送 =====================
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -178,6 +180,7 @@ def send_telegram_message(message):
     except Exception as e:
         print("Telegram message failed:", e)
 
+# ===================== Git 推送 =====================
 def git_push_changes():
     try:
         subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
@@ -187,20 +190,26 @@ def git_push_changes():
         if result.returncode != 0:
             subprocess.run(["git", "commit", "-m", "Update subscription files [skip ci]"], check=True)
             subprocess.run(["git", "push"], check=True)
-            print("Changes pushed to repository.")
+            print("✅ Changes pushed to repository.")
         else:
-            print("No changes to commit.")
+            print("ℹ️ No changes to commit.")
     except Exception as e:
-        print("Git push failed:", e)
+        print("❌ Git push failed:", e)
+
+# ===================== 初始化输出文件夹（彻底清空） =====================
+if os.path.exists(OUTPUT_DIR):
+    subprocess.run(["git", "rm", "-rf", OUTPUT_DIR], check=False)
+    shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
+
+# 删除 Git 缓存中的旧 output，确保编号从 001 开始
+subprocess.run(["git", "add", "-u", OUTPUT_DIR], check=False)
+subprocess.run(["git", "commit", "-m", "Reset output folder [skip ci]"], check=False)
+subprocess.run(["git", "push"], check=False)
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+print("✅ Output folder fully reset. Numbering will start from 001.")
 
 # ===================== 主流程 =====================
-
-# 安全删除 output 文件夹
-subprocess.run(["git", "rm", "-rf", OUTPUT_DIR], check=False)
-if os.path.exists(OUTPUT_DIR):
-    shutil.rmtree(OUTPUT_DIR)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
 print("Fetching repository file list...")
 file_urls = fetch_repo_files(UPSTREAM_REPO)
 print(f"Total files found: {len(file_urls)}")
@@ -218,10 +227,11 @@ for url in file_urls:
 
 print(f"Found {len(all_links)} unique subscription links")
 
-# 生成从 001 开始的文件
 for idx, link in enumerate(sorted(all_links), 1):
+    print(f"[{idx:03d}] Processing: {link}")
     nodes = fetch_nodes_from_link(link)
     if not nodes:
+        print(f"⚠️ Skipped (no valid nodes): {link}")
         continue
     nodes = list(dict.fromkeys(nodes))  # 去重
     renamed_nodes = rename_nodes(nodes)
@@ -230,4 +240,4 @@ for idx, link in enumerate(sorted(all_links), 1):
     send_telegram_message(f"订阅文件生成/更新：{filename}")
 
 git_push_changes()
-print("All subscription files processed and pushed to repository.")
+print("🎯 All subscription files processed and pushed to repository.")
