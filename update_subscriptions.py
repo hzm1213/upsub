@@ -23,17 +23,17 @@ NODE_PROTOCOLS = ["vmess://", "ss://", "trojan://", "vless://"]
 with open(EMOJI_JSON_FILE, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-FLAGS_MAP = data["flags_map"]           # 旗帜 emoji -> ISO
-RANDOM_EMOJI = data["random_emoji_list"] # 随机 emoji
+FLAGS_MAP = data["flags_map"]
+RANDOM_EMOJI = data["random_emoji_list"]
 
-# ===================== GitHub 默认分支 =====================
+# ===================== 获取默认分支 =====================
 def get_default_branch(repo):
     url = f"https://api.github.com/repos/{repo}"
     r = requests.get(url, timeout=15)
     r.raise_for_status()
     return r.json()["default_branch"]
 
-# ===================== GitHub 文件列表 =====================
+# ===================== 获取文件列表 =====================
 def fetch_repo_files(repo):
     branch = get_default_branch(repo)
     api_url = f"https://api.github.com/repos/{repo}/git/trees/{branch}?recursive=1"
@@ -67,8 +67,7 @@ def extract_links_from_content(content):
     except Exception:
         pass
     urls = re.findall(r"https?://[^\s'\"]+", content)
-    for u in urls:
-        links.add(u.strip())
+    links.update(urls)
     return links
 
 # ===================== 获取订阅节点 =====================
@@ -90,7 +89,7 @@ def fetch_nodes_from_link(url):
         print(f"Failed to fetch {url}: {e}")
         return []
 
-# ===================== 解析 remark =====================
+# ===================== remark 解析 =====================
 def get_vmess_remark(node):
     if not node.startswith("vmess://"):
         return ""
@@ -98,8 +97,7 @@ def get_vmess_remark(node):
     try:
         decoded = base64.b64decode(b64_content).decode()
         data = json.loads(decoded)
-        remark = data.get("ps", "")
-        return remark
+        return data.get("ps", "")
     except Exception:
         return ""
 
@@ -109,7 +107,6 @@ def get_generic_remark(node):
         return urllib.parse.unquote(remark)
     return ""
 
-# ===================== 修正 TW remark =====================
 def fix_tw_remark(remark):
     remark_decoded = urllib.parse.unquote(remark)
     remark_decoded = remark_decoded.replace("🇨🇳TW", "🇹🇼TW")
@@ -128,18 +125,12 @@ def rename_nodes(nodes):
 
     renamed = []
     for idx, node in enumerate(nodes, 1):
-        remark = ""
-        if node.startswith("vmess://"):
-            remark = get_vmess_remark(node)
-        else:
-            remark = get_generic_remark(node)
-
+        remark = get_vmess_remark(node) if node.startswith("vmess://") else get_generic_remark(node)
         remark = fix_tw_remark(remark)
 
         flag_emoji = "🏳️"
         region_code = "ZZ"
 
-        # 尝试从 remark 匹配旗帜或 ISO
         for emoji_flag, iso in FLAGS_MAP.items():
             if emoji_flag in remark:
                 flag_emoji = emoji_flag
@@ -156,7 +147,6 @@ def rename_nodes(nodes):
         seq = seq_format.format(idx)
         new_remark = f"{rand_emoji}{total}{flag_emoji}{region_code}{seq}"
 
-        # 更新节点
         if node.startswith("vmess://"):
             b64_content = node[len("vmess://"):]
             try:
@@ -174,14 +164,12 @@ def rename_nodes(nodes):
             renamed.append(f"{node}#{new_remark}")
     return renamed
 
-# ===================== 保存 base64 文件 =====================
 def write_base64_file(nodes, filename):
     b64_content = base64.b64encode("\n".join(nodes).encode()).decode()
     with open(filename, "w", encoding="utf-8") as f:
         f.write(b64_content)
     return b64_content
 
-# ===================== Telegram 消息 =====================
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -190,7 +178,6 @@ def send_telegram_message(message):
     except Exception as e:
         print("Telegram message failed:", e)
 
-# ===================== Git 提交 =====================
 def git_push_changes():
     try:
         subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
@@ -208,8 +195,9 @@ def git_push_changes():
 
 # ===================== 主流程 =====================
 
-# 清空 output 目录，保证从 001 开始
+# 彻底删除 output 文件夹，包括 Git index 中的旧文件
 if os.path.exists(OUTPUT_DIR):
+    subprocess.run(["git", "rm", "-rf", OUTPUT_DIR], check=False)
     shutil.rmtree(OUTPUT_DIR)
 os.makedirs(OUTPUT_DIR)
 
@@ -230,7 +218,7 @@ for url in file_urls:
 
 print(f"Found {len(all_links)} unique subscription links")
 
-# 从 001.txt 开始生成文件
+# 生成从 001 开始的文件
 for idx, link in enumerate(sorted(all_links), 1):
     nodes = fetch_nodes_from_link(link)
     if not nodes:
