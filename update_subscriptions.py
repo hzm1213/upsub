@@ -16,7 +16,7 @@ OUTPUT_DIR = "output"
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-EMOJI_JSON_FILE = "emoji_global.json"  # 包含 flags_map 和 random_emoji_list
+EMOJI_JSON_FILE = "emoji_global.json"
 NODE_PROTOCOLS = ["vmess://", "ss://", "trojan://", "vless://"]
 
 # ===================== 加载 emoji =====================
@@ -75,17 +75,21 @@ def fetch_nodes_from_link(url):
     try:
         r = requests.get(url, timeout=20)
         r.raise_for_status()
-        content = r.text.strip()
-        # 纯文本协议节点
+
+        content = r.text.strip().replace("\r", "")
+
+        # 纯文本节点
         if any(proto in content for proto in NODE_PROTOCOLS):
-            return content.splitlines()
-        # base64
+            return [line.rstrip() for line in content.split("\n") if line.strip()]
+
+        # Base64
         try:
-            decoded = base64.b64decode(content).decode()
+            decoded = base64.b64decode(content).decode().replace("\r", "")
             if any(proto in decoded for proto in NODE_PROTOCOLS):
-                return decoded.splitlines()
+                return [line.rstrip() for line in decoded.split("\n") if line.strip()]
         except Exception:
             pass
+
         return []
     except Exception as e:
         print(f"Failed to fetch {url}: {e}")
@@ -105,7 +109,7 @@ def get_vmess_remark(node):
 
 def get_generic_remark(node):
     if "#" in node:
-        remark = node.split("#",1)[1]
+        remark = node.split("#", 1)[1]
         return urllib.parse.unquote(remark)
     return ""
 
@@ -118,16 +122,16 @@ def fix_tw_remark(remark):
 # ===================== 节点重命名 =====================
 def rename_nodes(nodes):
     total = len(nodes)
-    if total < 100:
-        seq_format = "{:02d}"
-    elif total < 1000:
-        seq_format = "{:03d}"
-    else:
-        seq_format = "{:04d}"
+    seq_format = "{:02d}" if total < 100 else "{:03d}" if total < 1000 else "{:04d}"
 
     renamed = []
     for idx, node in enumerate(nodes, 1):
-        remark = get_vmess_remark(node) if node.startswith("vmess://") else get_generic_remark(node)
+
+        remark = (
+            get_vmess_remark(node)
+            if node.startswith("vmess://")
+            else get_generic_remark(node)
+        )
         remark = fix_tw_remark(remark)
 
         flag_emoji = "🏳️"
@@ -138,8 +142,9 @@ def rename_nodes(nodes):
                 flag_emoji = emoji_flag
                 region_code = iso
                 break
+
         if flag_emoji == "🏳️":
-            for iso, emoji_flag_candidate in {v:k for k,v in FLAGS_MAP.items()}.items():
+            for iso, emoji_flag_candidate in {v: k for k, v in FLAGS_MAP.items()}.items():
                 if iso.upper() in remark.upper():
                     flag_emoji = emoji_flag_candidate
                     region_code = iso
@@ -155,28 +160,35 @@ def rename_nodes(nodes):
                 decoded = base64.b64decode(b64_content).decode()
                 data = json.loads(decoded)
                 data["ps"] = new_remark
-                renamed.append("vmess://" + base64.b64encode(json.dumps(data).encode()).decode())
+                renamed.append(
+                    "vmess://" + base64.b64encode(json.dumps(data).encode()).decode()
+                )
                 continue
             except Exception:
                 pass
+
         if "#" in node:
-            main_part = node.split("#",1)[0]
+            main_part = node.split("#", 1)[0]
             renamed.append(f"{main_part}#{new_remark}")
         else:
             renamed.append(f"{node}#{new_remark}")
+
     return renamed
 
-# ===================== 写文件 =====================
+# ===================== 写 Base64 文件（修复空白/不完整问题） =====================
 def write_base64_file(nodes, filename):
-    b64_content = base64.b64encode("\n".join(nodes).encode()).decode()
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(b64_content)
+    clean_nodes = [n.rstrip() for n in nodes if n.strip()]
+    b64_content = base64.b64encode("\n".join(clean_nodes).encode()).decode()
+
+    with open(filename, "w", encoding="utf-8", newline="\n") as f:
+        f.write(b64_content.strip() + "\n")  # 去掉多余空行，确保文件完整
+
     return b64_content
 
 # ===================== Telegram =====================
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode":"HTML"}
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
         resp = requests.post(url, json=payload, timeout=15)
         if resp.status_code == 200:
@@ -190,11 +202,16 @@ def send_telegram_message(message):
 def git_push_changes():
     try:
         subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
-        subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"],
+            check=True,
+        )
         subprocess.run(["git", "add", OUTPUT_DIR], check=True)
         result = subprocess.run(["git", "diff", "--cached", "--quiet"])
         if result.returncode != 0:
-            subprocess.run(["git", "commit", "-m", "Update subscription files [skip ci]"], check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "Update subscription files [skip ci]"], check=True
+            )
             subprocess.run(["git", "push"], check=True)
             print("Changes pushed to repository.")
         else:
@@ -227,15 +244,21 @@ for url in file_urls:
 print(f"🔎 Found {len(all_links)} unique URLs.")
 
 valid_count = 0
-for idx, link in enumerate(sorted(all_links), 1):
+for link in sorted(all_links):
+
     nodes = fetch_nodes_from_link(link)
     if not nodes:
-        continue  # 跳过无效节点
+        continue  # ❗ 无节点 = 无效链接 = 不占编号
+
     nodes = list(dict.fromkeys(nodes))
+
     renamed_nodes = rename_nodes(nodes)
-    filename = os.path.join(OUTPUT_DIR, f"{valid_count+1:03d}.txt")
+
+    filename = os.path.join(OUTPUT_DIR, f"{valid_count + 1:03d}.txt")
     write_base64_file(renamed_nodes, filename)
+
     send_telegram_message(f"订阅文件生成/更新：{filename}")
+
     valid_count += 1
 
 git_push_changes()
